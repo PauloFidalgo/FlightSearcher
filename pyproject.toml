@@ -9,6 +9,35 @@ dependencies = [
     "playwright-stealth>=2.0.0",
     "pydantic>=2.11.9",
     "python-dotenv>=1.1.1",
+    "ruff>=0.13.1",
     "selectolax>=0.3.34",
     "sqlalchemy>=2.0.0",
 ]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+
+[tool.ruff]
+line-length = 150
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "tab"
+docstring-code-format = true
+
+[tool.mypy]
+packages = "src"
+ignore_missing_imports = true
