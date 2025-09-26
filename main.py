@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.services.database_service import DatabaseException, DatabaseService
 from src.services.flight_search_service import FlightSearchService
@@ -11,20 +11,16 @@ def daily_check():
 		if not database.health_check():
 			raise RuntimeError('Database health check failed')
 
-		#if not database.result_exists_today():
-		if True:
+		if not database.result_exists_today():
 			print('Result does not exist for today')
-			# departure_airports = ['OPO', 'LIS', 'MAD']
-			departure_airports = ['OPO']
-			# arrival_airports = ["NRT", "HND"]
-			arrival_airports = ['NRT']
-			stay_time = [8]
-			"""
-            possible_departure_dates = [
+			departure_airports = ['OPO', 'LIS', 'MAD']
+			arrival_airports = ["NRT", "HND"]
+			stay_time = [9,10,11]
+			
+			possible_departure_dates = [
                 datetime(year=2026, month=8, day=1) + timedelta(days=x)
                 for x in range(24)
-            ]"""
-			possible_departure_dates = [datetime(year=2026, month=8, day=1)]
+            ]
 
 			last_possible_day = datetime(year=2026, month=8, day=31)
 
@@ -37,13 +33,11 @@ def daily_check():
 				last_possible_day=last_possible_day,
 			)
 
-			print(results[0])
-
 			_ = database.create_daily_search(
 				results=results,
 			)
 
-			print('Created daily_search')
+			print(f'Created daily_search, with {len(results)} results')
 		else:
 			daily_search = database.get_today_search()
 			
