@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, String, Table, Text, TypeDecorator
+from sqlalchemy import DateTime, ForeignKey, String, Table, Text, TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -25,13 +25,6 @@ result_arrival_flights = Table(
 	sa.Column('flight_id', sa.ForeignKey('flight.id'), primary_key=True),
 )
 
-daily_search_results = Table(
-	'daily_search_results',
-	Base.metadata,
-	sa.Column('daily_search_id', sa.ForeignKey('daily_search.id'), primary_key=True),
-	sa.Column('result_id', sa.ForeignKey('result.id'), primary_key=True),
-)
-
 
 class DailySearch(Base):
 	__tablename__ = 'daily_search'
@@ -39,7 +32,7 @@ class DailySearch(Base):
 	id: Mapped[int] = mapped_column(primary_key=True)
 	result_date: Mapped[datetime] = mapped_column(DateTime)
 
-	results: Mapped[list['Result']] = relationship('Result', secondary=daily_search_results, back_populates='daily_search_results')
+	results: Mapped[list['Result']] = relationship()
 
 
 class Result(Base):
@@ -58,11 +51,7 @@ class Result(Base):
 	departure_flights: Mapped[list['Flight']] = relationship('Flight', secondary=result_departure_flights, back_populates='departure_results')
 
 	arrival_flights: Mapped[list['Flight']] = relationship('Flight', secondary=result_arrival_flights, back_populates='arrival_results')
-	daily_search_results: Mapped[list['Result']] = relationship(
-		'DailySearch',
-		secondary=daily_search_results,
-		back_populates='results',
-	)
+	daily_search_id: Mapped[int] = mapped_column(ForeignKey('daily_search.id'))
 
 	@property
 	def departure_flight_airports(self) -> tuple[str, str]:

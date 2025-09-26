@@ -5,13 +5,15 @@ from src.services.flight_search_service import FlightSearchService
 
 
 def daily_check():
-	database = DatabaseService(database_url='sqlite:///flights.db', echo=True)
+	database = DatabaseService(database_url='sqlite:///flights.db', echo=False)
 
 	try:
 		if not database.health_check():
 			raise RuntimeError('Database health check failed')
 
-		if not database.result_exists_today():
+		#if not database.result_exists_today():
+		if True:
+			print('Result does not exist for today')
 			# departure_airports = ['OPO', 'LIS', 'MAD']
 			departure_airports = ['OPO']
 			# arrival_airports = ["NRT", "HND"]
@@ -35,11 +37,19 @@ def daily_check():
 				last_possible_day=last_possible_day,
 			)
 
+			print(results[0])
+
 			_ = database.create_daily_search(
 				results=results,
 			)
 
 			print('Created daily_search')
+		else:
+			daily_search = database.get_today_search()
+			
+			for result in daily_search.results:
+				print(result)
+
 	except DatabaseException as e:
 		print(f'Database error: {e}')
 	except Exception as e:

@@ -35,6 +35,7 @@ class FlightSearchService:
 
 		possible_arrival_dates = [min_arrival + timedelta(days=x) for x in range(num_days)]
 
+
 		for dep_airport in possible_departures:
 			for arr_airport in possible_arrivals:
 				for arr_date in possible_arrival_dates:
@@ -47,7 +48,9 @@ class FlightSearchService:
 
 		for (dep_air, arr_air, dep_dt), dep_flights in departure_flights.items():
 			for (ret_dep_air, ret_arr_air, arr_dt), arr_flights in arrival_flights.items():
-				if arr_dt >= dep_dt + timedelta(days=min_stay) and arr_dt <= dep_dt + timedelta(days=max_stay):
+				total_stay = arr_dt - dep_dt
+
+				if total_stay.days in stay_time:
 					res_entry = Result(
 						departure_flight_airports=(dep_air, arr_air),
 						arrival_flight_airports=(ret_dep_air, ret_arr_air),

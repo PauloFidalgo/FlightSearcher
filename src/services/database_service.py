@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, inspect, select
+from sqlalchemy import Engine, create_engine, inspect, select, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -100,7 +100,7 @@ class DatabaseService:
 		try:
 			with self.get_session() as session:
 				today = date.today()
-				stmt = select(DailySearch).where(DailySearch.result_date == today)
+				stmt = select(DailySearch).where(func.date(DailySearch.result_date) == today)
 				result = session.execute(stmt).first()
 				exists = result is not None
 
@@ -112,7 +112,7 @@ class DatabaseService:
 		try:
 			with self.get_session() as session:
 				today = date.today()
-				stmt = select(DailySearch).where(DailySearch.result_date == today)
+				stmt = select(DailySearch).where(func.date(DailySearch.result_date) == today)
 				result = session.execute(stmt).scalar_one_or_none()
 
 				if result:
@@ -120,6 +120,7 @@ class DatabaseService:
 						_ = res.departure_flights
 						_ = res.arrival_flights
 
+				session.expunge_all()
 				return result
 		except SQLAlchemyError as e:
 			raise DatabaseException(f'Failed to retrieve todays result: {e}') from e
@@ -127,7 +128,7 @@ class DatabaseService:
 	def get_search_by_date(self, target_date: date) -> DailySearch | None:
 		try:
 			with self.get_session() as session:
-				stmt = select(DailySearch).where(DailySearch.result_date == target_date)
+				stmt = select(DailySearch).where(func.date(DailySearch.result_date) == target_date)
 				result = session.execute(stmt).scalar_one_or_none()
 
 				if result:
@@ -135,6 +136,7 @@ class DatabaseService:
 						_ = res.departure_flights
 						_ = res.arrival_flights
 
+				session.expunge_all()
 				return result
 		except SQLAlchemyError as e:
 			raise DatabaseException(f'Failed to retrieve result for {target_date}: {e}') from e
