@@ -3,11 +3,11 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, inspect, select, func
+from sqlalchemy import Engine, create_engine, func, inspect, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.models.database import Base, DailySearch, Result
+from src.models.database import Base, Flight
 
 
 class DatabaseException(Exception):
@@ -96,83 +96,78 @@ class DatabaseService:
 		except Exception:
 			return False
 
-	def result_exists_today(self) -> bool:
+	def get_search_by_date(self, target_date: date) -> list[Flight]:
 		try:
 			with self.get_session() as session:
-				today = date.today()
-				stmt = select(DailySearch).where(func.date(DailySearch.result_date) == today)
-				result = session.execute(stmt).first()
-				exists = result is not None
-
-				return exists
-		except Exception as e:
-			raise DatabaseException(f'Failed to check daily result: {e}') from e
-
-	def get_today_search(self) -> DailySearch | None:
-		try:
-			with self.get_session() as session:
-				today = date.today()
-				stmt = select(DailySearch).where(func.date(DailySearch.result_date) == today)
-				result = session.execute(stmt).scalar_one_or_none()
-
-				if result:
-					for res in result.results:
-						_ = res.departure_flights
-						_ = res.arrival_flights
+				stmt = select(Flight).where(func.date(Flight.search_date) == target_date)
+				result = session.execute(stmt).scalars().all()
 
 				session.expunge_all()
-				return result
-		except SQLAlchemyError as e:
-			raise DatabaseException(f'Failed to retrieve todays result: {e}') from e
-
-	def get_search_by_date(self, target_date: date) -> DailySearch | None:
-		try:
-			with self.get_session() as session:
-				stmt = select(DailySearch).where(func.date(DailySearch.result_date) == target_date)
-				result = session.execute(stmt).scalar_one_or_none()
-
-				if result:
-					for res in result.results:
-						_ = res.departure_flights
-						_ = res.arrival_flights
-
-				session.expunge_all()
-				return result
+				return list(result)
 		except SQLAlchemyError as e:
 			raise DatabaseException(f'Failed to retrieve result for {target_date}: {e}') from e
 
-	def get_all_results(self) -> list[DailySearch]:
+	def get_flight_from_to_date(self, dep_air: str, arr_air: str, dep_dt: date, search_date: date) -> list[Flight]:
 		try:
 			with self.get_session() as session:
-				stmt = select(DailySearch).order_by(DailySearch.result_date.desc())
+				stmt = select(Flight).where(
+					func.date(Flight.departure_date == dep_dt),
+					func.date(Flight.search_date == search_date),
+					Flight.departure_airport == dep_air,
+					Flight.arrival_airport == arr_air,
+				)
 				results = session.execute(stmt).scalars().all()
-
-				for result in results:
-					for res in result.results:
-						_ = res.departure_flights
-						_ = res.arrival_flights
 
 				return list(results)
 		except SQLAlchemyError as e:
 			raise DatabaseException(f'Failed to retrieve results: {e}') from e
 
-	def create_daily_search(self, results: list[Result]) -> DailySearch:
+	def flight_exists(self, flight: Flight) -> bool:
+		"""Check if a flight with the same unique fields already exists in the database"""
 		try:
 			with self.get_session() as session:
-				result = DailySearch(
-					result_date=date.today(),
-					results=results,
+				stmt = select(Flight).where(
+					Flight.search_date == flight.search_date,
+					Flight.arrival_airport == flight.arrival_airport,
+					Flight.departure_airport == flight.departure_airport,
+					Flight.departure_date == flight.departure_date,
+					Flight.arrival_date == flight.arrival_date,
+					Flight.departure_time == flight.departure_time,
+					Flight.arrival_time == flight.arrival_time,
+					Flight.total_hours == flight.total_hours,
+					Flight.companies == flight.companies,
+					Flight.connections == flight.connections,
 				)
-
-				session.add(result)
-				session.flush()
-				session.refresh(result)
-
-				return result
-		except IntegrityError as e:
-			raise DatabaseException(f'Result already exists for date {date.today()}: {e}') from e
+				result = session.execute(stmt).first()
+				return result is not None
 		except SQLAlchemyError as e:
-			raise DatabaseException(f'Failed to create model: {e}') from e
+			raise DatabaseException(f'Failed to check if flight exists: {e}') from e
+
+	def save_flights(self, flights: list[Flight]) -> None:
+		"""Save a list of flights to the database"""
+		if not flights:
+			return
+
+		try:
+			with self.get_session() as session:
+				session.add_all(flights)
+		except IntegrityError as e:
+			raise DatabaseException(f'Duplicate flight data: {e}') from e
+		except SQLAlchemyError as e:
+			raise DatabaseException(f'Failed to save flights: {e}') from e
+
+	def save_unique_flights(self, flights: list[Flight]) -> None:
+		"""Save only unique flights to the database, returning count of flights saved"""
+		if not flights:
+			return
+
+		unique_flights = []
+		for flight in flights:
+			if not self.flight_exists(flight):
+				unique_flights.append(flight)
+
+		if unique_flights:
+			self.save_flights(unique_flights)
 
 	def close(self) -> None:
 		if self._engine:

@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .ruff_cache/
 .mypy_cache/
+.vscode/

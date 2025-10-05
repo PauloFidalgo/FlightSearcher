@@ -1,51 +1,44 @@
 from datetime import datetime, timedelta
 
-from src.services.database_service import DatabaseException, DatabaseService
-from src.services.flight_search_service import FlightSearchService
+from src.scraper.play import Scraper
+from src.services.database_service import DatabaseService
+from src.services.trip_agency_service import TripAgencyService
+
+from src.utils.logger import setup_logging, get_logger
 
 
-def daily_check():
+def run():
 	database = DatabaseService(database_url='sqlite:///flights.db', echo=False)
+	scraper = Scraper()
 
 	try:
 		if not database.health_check():
-			raise RuntimeError('Database health check failed')
+			raise RuntimeError('Database not ready')
 
-		if not database.result_exists_today():
-			print('Result does not exist for today')
-			departure_airports = ['OPO', 'LIS', 'MAD']
-			arrival_airports = ["NRT", "HND"]
-			stay_time = [9,10,11]
-			
-			possible_departure_dates = [
-                datetime(year=2026, month=8, day=1) + timedelta(days=x)
-                for x in range(24)
-            ]
+		# departure_airports = ['OPO', 'LIS', 'MAD']
+		# arrival_airports = ['NRT', 'HND']
+		# stay_time = [9, 10, 11]
 
-			last_possible_day = datetime(year=2026, month=8, day=31)
+		# possible_departure_dates = [datetime(year=2026, month=8, day=1) + timedelta(days=x) for x in range(24)]
+		# last_possible_day = datetime(year=2026, month=8, day=31)
 
-			flight_search = FlightSearchService()
-			results = flight_search.search_flights(
-				possible_departures=departure_airports,
-				possible_arrivals=arrival_airports,
-				stay_time=stay_time,
-				possible_departure_dates=possible_departure_dates,
-				last_possible_day=last_possible_day,
-			)
+		departure_airports = ['OPO']
+		arrival_airports = ['MAD']
+		stay_time = [3, 4]
+		possible_departure_dates = [datetime(year=2025, month=11, day=29) + timedelta(days=x) for x in range(50)]
+		last_possible_day = datetime(year=2026, month=1, day=1)
 
-			_ = database.create_daily_search(
-				results=results,
-			)
+		trip_agent = TripAgencyService(database_service=database, scraper=scraper)
 
-			print(f'Created daily_search, with {len(results)} results')
-		else:
-			daily_search = database.get_today_search()
-			
-			for result in daily_search.results:
-				print(result)
+		trip_agent.find_daily_flight_combinations(
+			possible_trip_starting_points=departure_airports,
+			possible_trip_destinations=arrival_airports,
+			wanted_stay_time=stay_time,
+			possible_start_trip_dates=possible_departure_dates,
+			last_vacation_day=last_possible_day,
+			save_to_db=False,
+		)
 
-	except DatabaseException as e:
-		print(f'Database error: {e}')
 	except Exception as e:
 		print(f'Unexpected error: {e}')
 	finally:
@@ -53,8 +46,10 @@ def daily_check():
 
 
 def main() -> None:
-	daily_check()
+	run()
 
 
 if __name__ == '__main__':
+	setup_logging()
+	get_logger(__name__).info("Starting application...")
 	main()

@@ -2,72 +2,12 @@ import json
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, String, Table, Text, TypeDecorator
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import DateTime, String, Text, TypeDecorator, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
 	pass
-
-
-# Association tables for many-to-many relationships
-result_departure_flights = Table(
-	'result_departure_flights',
-	Base.metadata,
-	sa.Column('result_id', sa.ForeignKey('result.id'), primary_key=True),
-	sa.Column('flight_id', sa.ForeignKey('flight.id'), primary_key=True),
-)
-
-result_arrival_flights = Table(
-	'result_arrival_flights',
-	Base.metadata,
-	sa.Column('result_id', sa.ForeignKey('result.id'), primary_key=True),
-	sa.Column('flight_id', sa.ForeignKey('flight.id'), primary_key=True),
-)
-
-
-class DailySearch(Base):
-	__tablename__ = 'daily_search'
-
-	id: Mapped[int] = mapped_column(primary_key=True)
-	result_date: Mapped[datetime] = mapped_column(DateTime)
-
-	results: Mapped[list['Result']] = relationship()
-
-
-class Result(Base):
-	__tablename__ = 'result'
-
-	id: Mapped[int] = mapped_column(primary_key=True)
-
-	departure_flight_airport_1: Mapped[str] = mapped_column(String(20))
-	departure_flight_airport_2: Mapped[str] = mapped_column(String(20))
-	arrival_flight_airport_1: Mapped[str] = mapped_column(String(20))
-	arrival_flight_airport_2: Mapped[str] = mapped_column(String(20))
-
-	departure_date: Mapped[datetime] = mapped_column(DateTime)
-	arrival_date: Mapped[datetime] = mapped_column(DateTime)
-
-	departure_flights: Mapped[list['Flight']] = relationship('Flight', secondary=result_departure_flights, back_populates='departure_results')
-
-	arrival_flights: Mapped[list['Flight']] = relationship('Flight', secondary=result_arrival_flights, back_populates='arrival_results')
-	daily_search_id: Mapped[int] = mapped_column(ForeignKey('daily_search.id'))
-
-	@property
-	def departure_flight_airports(self) -> tuple[str, str]:
-		return (self.departure_flight_airport_1, self.departure_flight_airport_2)
-
-	@departure_flight_airports.setter
-	def departure_flight_airports(self, value: tuple[str, str]):
-		self.departure_flight_airport_1, self.departure_flight_airport_2 = value
-
-	@property
-	def arrival_flight_airports(self) -> tuple[str, str]:
-		return (self.arrival_flight_airport_1, self.arrival_flight_airport_2)
-
-	@arrival_flight_airports.setter
-	def arrival_flight_airports(self, value: tuple[str, str]):
-		self.arrival_flight_airport_1, self.arrival_flight_airport_2 = value
 
 
 class JSONList(TypeDecorator):
@@ -100,7 +40,25 @@ class JSONList(TypeDecorator):
 class Flight(Base):
 	__tablename__ = 'flight'
 
+	# Add unique constraint for the combination of fields
+	__table_args__ = (
+		UniqueConstraint(
+			'search_date',
+			'arrival_airport',
+			'departure_airport',
+			'departure_date',
+			'arrival_date',
+			'departure_time',
+			'arrival_time',
+			'total_hours',
+			'companies',
+			'connections',
+			name='uq_flight_details',
+		),
+	)
+
 	id: Mapped[int] = mapped_column(primary_key=True)
+	search_date: Mapped[datetime] = mapped_column(DateTime)
 	arrival_airport: Mapped[str] = mapped_column(String(20))
 	departure_airport: Mapped[str] = mapped_column(String(20))
 	departure_date: Mapped[datetime] = mapped_column(DateTime)
@@ -111,10 +69,6 @@ class Flight(Base):
 	total_hours: Mapped[float] = mapped_column(sa.Float, nullable=True, default=0.0)
 	companies: Mapped[str] = mapped_column(JSONList, nullable=True)
 	connections: Mapped[str] = mapped_column(String(255), nullable=True)
-
-	departure_results: Mapped[list['Result']] = relationship('Result', secondary=result_departure_flights, back_populates='departure_flights')
-
-	arrival_results: Mapped[list['Result']] = relationship('Result', secondary=result_arrival_flights, back_populates='arrival_flights')
 
 	def _key(self):
 		return (
@@ -135,3 +89,17 @@ class Flight(Base):
 		if isinstance(other, Flight):
 			return self._key() == other._key()
 		return NotImplemented
+
+	@classmethod
+	def by_search_date(cls, search_date):
+		"""Helper method for querying by search date"""
+		from sqlalchemy import func
+
+		return func.date(cls.search_date) == search_date
+
+	@classmethod
+	def by_departure_date(cls, departure_date):
+		"""Helper method for querying by departure date"""
+		from sqlalchemy import func
+
+		return func.date(cls.departure_date) == departure_date

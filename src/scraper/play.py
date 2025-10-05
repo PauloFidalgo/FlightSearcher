@@ -1,9 +1,10 @@
 import heapq
 import random
 import re
-from datetime import datetime, timedelta
+import time
+from datetime import date, datetime, timedelta
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 from playwright_stealth import Stealth
 from selectolax.parser import HTMLParser
 
@@ -15,8 +16,15 @@ class Scraper:
 		'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
 		'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
 		'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0',
-		'Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36',
-		'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+	]
+
+	VIEWPORTS = [
+		{'width': 1280, 'height': 720},
+		{'width': 1366, 'height': 768},
+		{'width': 1440, 'height': 900},
+		{'width': 1536, 'height': 864},
+		{'width': 1600, 'height': 900},
+		{'width': 1680, 'height': 1050},
 	]
 
 	def _filter_flights(self, flights: list[Flight]) -> list[Flight]:
@@ -36,28 +44,65 @@ class Scraper:
 		html: str = self.fetch_momondo_html(url=url)
 
 		flights = self.parse_momondo_flights(html, departure, arrival, date)
+
 		return self._filter_flights(flights=flights)
 
+	def _handle_cookie_consent(self, page: Page):
+		"""Handle cookie consent with more human-like behavior"""
+		try:
+			time.sleep(random.uniform(1, 2))
+
+			cookie_selectors = ["text='Aceitar tudo'", "text='Accept all'", "[data-testid='accept-all']", '.cookie-accept', '#cookie-accept']
+
+			for selector in cookie_selectors:
+				try:
+					locator = page.locator(selector)
+					if locator.count() > 0:
+						for i in range(locator.count()):
+							if locator.nth(i).is_visible():
+								time.sleep(random.uniform(0.5, 1.5))
+								locator.nth(i).click()
+								time.sleep(random.uniform(1, 2))
+								return
+				except Exception as e:
+					print(f'Error handling cookie consent: {e}')
+					continue
+
+		except Exception as e:
+			print(f'Error handling cookie consent: {e}')
+
 	def fetch_momondo_html(self, url: str) -> str:
-		user_agent = random.choice(self.USER_AGENTS)
-
 		with Stealth().use_sync(sync_playwright()) as p:
-			browser = p.chromium.launch(headless=True)
-			page = browser.new_page()
+			browser = p.chromium.launch(
+				headless=True,
+				args=['--disable-blink-features=AutomationControlled', '--enable-webgl', '--use-gl=swiftshader', '--enable-accelerated-2d-canvas'],
+			)
 
-			page.set_extra_http_headers({'User-Agent': user_agent})
+			viewport = random.choice(self.VIEWPORTS)
+			user_agent = random.choice(self.USER_AGENTS)
+			context = browser.new_context(
+				user_agent=user_agent,
+				viewport={'width': viewport['width'], 'height': viewport['height']},
+			)
+
+			page = context.new_page()
 
 			page.goto(url, timeout=60000)
 
-			try:
-				locator = page.locator("text='Aceitar tudo'")
-				count = locator.count()
-				for i in range(count):
-					if locator.nth(i).is_visible():
-						locator.nth(i).click()
-						break
-			except Exception:
-				pass
+			self._handle_cookie_consent(page)
+
+			for _ in range(5):
+				random_x = random.uniform(-100.0, 100.0)
+				random_y = random.uniform(-200.0, 200.0)
+
+				init_x = random_x
+				init_y = random_y
+				for _ in range(15):
+					delta_x = random.choice([1, -1, 0])
+					delta_y = random.choice([1, -1, 0])
+					page.mouse.move(init_x + delta_x, init_y + delta_y)
+				page.mouse.wheel(random_x, random_y)
+				time.sleep(random.uniform(0.05, 1.5))
 
 			page.wait_for_function(
 				"""() => {
@@ -71,13 +116,20 @@ class Scraper:
 			browser.close()
 			return html_content
 
-	def parse_momondo_flights(self, html: str, departure_airport: str, arrival_airport: str, date: str):
-		tree = HTMLParser(html)
-		flights = []
+	def parse_momondo_flights(self, html: str, departure_airport: str, arrival_airport: str, dt: str) -> list[Flight]:
+		try:
+			tree = HTMLParser(html)
+		except Exception as e:
+			print(f'Error parsing HTML: {e}')
+			return []
 
-		base_date = datetime.strptime(date, '%Y-%m-%d')
+		flights: list[Flight] = []
 
-		for card in tree.css('div.nrc6-inner'):
+		base_date = datetime.strptime(dt, '%Y-%m-%d')
+
+		flight_cards = tree.css('div.nrc6-inner')
+
+		for card in flight_cards:
 			try:
 				# ---- Times and Connections ----
 				times = [span.text().strip() for span in card.css('div.vmXl span') if span.text().strip() != '–']
@@ -116,10 +168,13 @@ class Scraper:
 						price_text = price_div.text().strip()
 						price = float(re.sub(r'[^\d,]', '', price_text).replace(',', '.'))
 
+					today = date.today()
+
 					flights.append(
 						Flight(
 							departure_airport=departure_airport,
 							arrival_airport=arrival_airport,
+							search_date=today,
 							departure_date=dep_dt,
 							arrival_date=arr_dt,
 							departure_time=dep_dt,
@@ -132,7 +187,8 @@ class Scraper:
 					)
 
 			except Exception as e:
-				print('Error parsing card:', e)
+				print(f'Error parsing flight card: {e}')
+				print(f'Error type: {type(e).__name__}')
 				continue
 
 		return flights
