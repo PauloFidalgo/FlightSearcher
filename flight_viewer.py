@@ -10,6 +10,21 @@ import pandas as pd
 import streamlit as st
 
 
+def extract_airports_from_filename(filename):
+	"""Extract departure and arrival airports from filename pattern like 'dep_OPO_NRT_<date>__arr_NRT_OPO_<date>'"""
+	try:
+		if '__arr_' in filename:
+			dep_part = filename.split('__arr_')[0]
+			# Extract from dep_FROM_TO_date pattern
+			dep_parts = dep_part.replace('dep_', '').split('_')
+			if len(dep_parts) >= 2:
+				dep_from = dep_parts[0]  # OPO
+				dep_to = dep_parts[1]    # NRT
+				return dep_from, dep_to
+	except:
+		pass
+	return None, None
+
 def extract_departure_date(filename):
 	"""Extract departure date from filename for sorting purposes"""
 	try:
@@ -157,49 +172,180 @@ def main():
 	with col1:
 		departure_airport = st.selectbox(
 			"✈️ Departure Airport",
-			options=["OPO", "LIS", "MAD"],
+			options=["ALL", "OPO", "LIS", "MAD"],
 			index=0,
-			help="Select your departure airport"
+			help="Select your departure airport or ALL for mixed combinations"
 		)
 	
 	with col2:
 		arrival_airport = st.selectbox(
 			"🛬 Tokyo Airport",
-			options=["HND", "NRT"],
+			options=["ALL", "HND", "NRT"],
 			index=0,
-			help="Select your arrival airport in Tokyo"
+			help="Select your arrival airport in Tokyo or ALL for mixed combinations"
 		)
 	
 	with col3:
-		st.markdown(f"**Selected Route:** {departure_airport} → {arrival_airport}")
-		st.markdown(f"**Route Description:** {departure_airport} ({'Porto' if departure_airport == 'OPO' else 'Lisbon' if departure_airport == 'LIS' else 'Madrid'}) to {arrival_airport} ({'Haneda' if arrival_airport == 'HND' else 'Narita'})")
+		if departure_airport == "ALL" and arrival_airport == "ALL":
+			st.markdown("**Selected Route:** All Combinations")
+			st.markdown("**Including mixed routes:** OPO→NRT+HND→LIS, etc.")
+		elif departure_airport == "ALL":
+			st.markdown(f"**Selected Route:** Any → {arrival_airport}")
+			st.markdown(f"**From any city to:** {arrival_airport} ({'Haneda' if arrival_airport == 'HND' else 'Narita'})")
+		elif arrival_airport == "ALL":
+			st.markdown(f"**Selected Route:** {departure_airport} → Any")
+			st.markdown(f"**From:** {departure_airport} ({'Porto' if departure_airport == 'OPO' else 'Lisbon' if departure_airport == 'LIS' else 'Madrid'}) to any Tokyo airport")
+		else:
+			st.markdown(f"**Selected Route:** {departure_airport} → {arrival_airport}")
+			st.markdown(f"**Route Description:** {departure_airport} ({'Porto' if departure_airport == 'OPO' else 'Lisbon' if departure_airport == 'LIS' else 'Madrid'}) to {arrival_airport} ({'Haneda' if arrival_airport == 'HND' else 'Narita'})")
 
-	# Filter CSV files based on selected airports
-	filtered_csv_files = {}
-	for filename, df in csv_files.items():
-		# Check if the filename contains the selected airports
-		if f"_{departure_airport}_" in filename and f"_{arrival_airport}_" in filename:
-			filtered_csv_files[filename] = df
+	# Get all available flight data for mixed combinations
+	all_flight_data = []
+	available_routes = set()
 	
-	if not filtered_csv_files:
-		st.warning(f"No flights found for route {departure_airport} → {arrival_airport}")
+	# Load all CSV files and extract route information
+	outputs_dir = Path('outputs')
+	for csv_path in outputs_dir.glob('*.csv'):
+		try:
+			df = pd.read_csv(csv_path)
+			if df.empty:
+				continue
+				
+			# Clean the data
+			if 'dep_connections' in df.columns:
+				df = df[~df['dep_connections'].str.contains('transbordo', case=False, na=False)]
+			if 'arr_connections' in df.columns:
+				df = df[~df['arr_connections'].str.contains('transbordo', case=False, na=False)]
+			
+			# Remove ID and search date columns
+			columns_to_remove = [col for col in df.columns if col.endswith('_id') or 'search_date' in col.lower() or col.startswith('dep_id') or col.startswith('arr_id')]
+			df = df.drop(columns=columns_to_remove, errors='ignore')
+			
+			# Extract route information from filename
+			dep_from, dep_to = extract_airports_from_filename(csv_path.stem)
+			if dep_from and dep_to:
+				df['dep_from_airport'] = dep_from
+				df['dep_to_airport'] = dep_to
+				df['source_file'] = create_friendly_name(csv_path.stem)
+				df['original_filename'] = csv_path.stem
+				
+				# Filter based on selection
+				include_file = False
+				if departure_airport == "ALL" and arrival_airport == "ALL":
+					include_file = True
+				elif departure_airport == "ALL":
+					include_file = (dep_to == arrival_airport)
+				elif arrival_airport == "ALL":
+					include_file = (dep_from == departure_airport)
+				else:
+					include_file = (dep_from == departure_airport and dep_to == arrival_airport)
+				
+				if include_file:
+					available_routes.add(f"{dep_from} → {dep_to}")
+					all_flight_data.append(df)
+					
+		except Exception as e:
+			st.error(f"Error loading {csv_path.name}: {e}")
+	
+	if not all_flight_data:
+		st.warning(f"No flights found for the selected criteria")
 		st.stop()
 
+	# Combine all flight data
+	combined_df = pd.concat(all_flight_data, ignore_index=True)
+	
 	st.markdown("---")
-	st.info(f"Showing {len(filtered_csv_files)} flight combinations for {departure_airport} → {arrival_airport}")
+	st.info(f"Found data for routes: {', '.join(sorted(available_routes))}")
 
-	# Sort tabs by departure date (ascending)
-	# First, we need to get the original filenames to extract dates
+	# Create summary table for cheapest flights by duration (9, 10, 11 days only)
+	st.subheader("💰 Best Deals by Trip Duration (9, 10, 11 days)")
+	
+	if 'trip_duration_days' in combined_df.columns and 'total_price' in combined_df.columns:
+		# Filter for only 9, 10, 11 day trips
+		duration_filter = combined_df['trip_duration_days'].isin([9, 10, 11])
+		filtered_duration_df = combined_df[duration_filter]
+		
+		if not filtered_duration_df.empty:
+			# Group by trip duration and find cheapest for each duration
+			summary_data = []
+			
+			for duration in [9, 10, 11]:
+				duration_df = filtered_duration_df[filtered_duration_df['trip_duration_days'] == duration]
+				if not duration_df.empty:
+					cheapest_idx = duration_df['total_price'].idxmin()
+					cheapest_row = duration_df.loc[cheapest_idx]
+					
+					# Get return route info from the data
+					return_from = cheapest_row.get('arr_departure_airport', 'N/A')
+					return_to = cheapest_row.get('arr_arrival_airport', 'N/A')
+					
+					summary_data.append({
+						'Duration': f"{int(duration)} days",
+						'Price': f"€{cheapest_row['total_price']:.0f}",
+						'Outbound': f"{cheapest_row['dep_from_airport']} → {cheapest_row['dep_to_airport']}",
+						'Return': f"{return_from} → {return_to}" if return_from != 'N/A' else f"{cheapest_row['dep_to_airport']} → {cheapest_row['dep_from_airport']}",
+						'Dep Date': pd.to_datetime(cheapest_row['dep_departure_date']).strftime('%b %d') if pd.notna(cheapest_row['dep_departure_date']) else 'N/A',
+						'Ret Date': pd.to_datetime(cheapest_row['arr_departure_date']).strftime('%b %d') if pd.notna(cheapest_row['arr_departure_date']) else 'N/A',
+						'Out €': f"€{cheapest_row['dep_price']:.0f}" if pd.notna(cheapest_row['dep_price']) else 'N/A',
+						'Back €': f"€{cheapest_row['arr_price']:.0f}" if pd.notna(cheapest_row['arr_price']) else 'N/A'
+					})
+			
+			if summary_data:
+				summary_df = pd.DataFrame(summary_data)
+				
+				# Display as a nice table
+				st.dataframe(
+					summary_df,
+					use_container_width=True,
+					hide_index=True,
+					column_config={
+						"Duration": st.column_config.TextColumn("🗓️ Duration", width="small"),
+						"Price": st.column_config.TextColumn("💰 Total", width="small"),
+						"Outbound": st.column_config.TextColumn("🛫 Outbound Route", width="medium"),
+						"Return": st.column_config.TextColumn("🛬 Return Route", width="medium"),
+						"Dep Date": st.column_config.TextColumn("📅 Dep", width="small"),
+						"Ret Date": st.column_config.TextColumn("📅 Ret", width="small"),
+						"Out €": st.column_config.TextColumn("✈️ Out", width="small"),
+						"Back €": st.column_config.TextColumn("✈️ Back", width="small")
+					}
+				)
+				
+				# Show some quick stats
+				col1, col2, col3 = st.columns(3)
+				with col1:
+					prices = [float(price.replace('€', '')) for price in summary_df['Price']]
+					min_price = min(prices)
+					best_duration = summary_df.loc[prices.index(min_price), 'Duration']
+					st.metric("🏆 Best Deal", f"€{min_price:.0f}", f"{best_duration}")
+				with col2:
+					max_price = max(prices)
+					st.metric("� Most Expensive", f"€{max_price:.0f}")
+				with col3:
+					price_diff = max_price - min_price
+					st.metric("📈 Price Difference", f"€{price_diff:.0f}")
+			else:
+				st.warning("No flights found for 9, 10, or 11 day durations.")
+		else:
+			st.warning("No flights found for 9, 10, or 11 day durations.")
+	else:
+		st.warning("Missing required columns for price analysis.")
+
+	# Now create filtered CSV files for tabs (keeping original logic for detailed view)
+	filtered_csv_files = {}
 	original_filenames = {}
-	for friendly_name in filtered_csv_files:
-		# Find the original filename by checking outputs directory
-		outputs_dir = Path('outputs')
-		for csv_path in outputs_dir.glob('*.csv'):
-			if create_friendly_name(csv_path.stem) == friendly_name:
-				original_filenames[friendly_name] = csv_path.stem
-				break
+	
+	# For tabs, we'll group by original route combinations
+	for df in all_flight_data:
+		if not df.empty:
+			source_file = df['source_file'].iloc[0]
+			original_filename = df['original_filename'].iloc[0]
+			
+			# Remove the added columns for tab display
+			tab_df = df.drop(['dep_from_airport', 'dep_to_airport', 'source_file', 'original_filename'], axis=1, errors='ignore')
+			filtered_csv_files[source_file] = tab_df
+			original_filenames[source_file] = original_filename
 
-	# Sort by departure date
+	# Sort tabs by departure date (ascending) - using already found original filenames
 	sorted_tab_names = sorted(filtered_csv_files.keys(), key=lambda name: extract_departure_date(original_filenames.get(name, name)))
 
 	# Create tabs for each file in sorted order
