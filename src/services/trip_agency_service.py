@@ -11,16 +11,15 @@ from src.services.database_service import DatabaseException, DatabaseService
 
 
 class TripAgencyService:
-	def __init__(self, database_service: DatabaseService, scraper: Scraper) -> None:
-		self._db_service = database_service
-		self._scraper = scraper
+	def __init__(self, scraper: Scraper, database_service: DatabaseService | None = None) -> None:
+		self._scraper: Scraper = scraper
+		self._db_service: DatabaseService | None = database_service
 
 	def _get_flights_dict(
 		self,
 		dep: list[str],
 		arr: list[str],
 		dt: list[datetime],
-		save_db: bool,
 	) -> dict[tuple[str, str, datetime], list[Flight]]:
 		res: dict[tuple[str, str, datetime], list[Flight]] = dict()
 
@@ -31,13 +30,14 @@ class TripAgencyService:
 				for dp_date in dt:
 					dep_flights_combination = []
 
-					with contextlib.suppress(DatabaseException):
-						dep_flights_combination = self._db_service.get_flight_from_to_date(
-							dep_air=st_point,
-							arr_air=trip_dest,
-							dep_dt=dp_date,
-							search_date=today,
-						)
+					if self._db_service:
+						with contextlib.suppress(DatabaseException):
+							dep_flights_combination = self._db_service.get_flight_from_to_date(
+								dep_air=st_point,
+								arr_air=trip_dest,
+								dep_dt=dp_date,
+								search_date=today,
+							)
 
 					if not dep_flights_combination:
 						dep_flights_combination = self._scraper.get_flights(departure=st_point, arrival=trip_dest, date=dp_date.strftime('%Y-%m-%d'))
@@ -45,7 +45,7 @@ class TripAgencyService:
 						# Try to mimic the human behavior
 						time.sleep(random.uniform(0.05, 5.5))
 
-						if save_db:
+						if self._db_service:
 							with contextlib.suppress(DatabaseException):
 								self._db_service.save_unique_flights(dep_flights_combination)
 
@@ -61,14 +61,12 @@ class TripAgencyService:
 		wanted_stay_time: list[int],
 		possible_start_trip_dates: list[datetime],
 		last_vacation_day: datetime,
-		save_to_db: bool = True,
 	) -> None:
 		valid_starting_points = list(filter(lambda x: x <= last_vacation_day, possible_start_trip_dates))
 		departure_flights = self._get_flights_dict(
 			dep=possible_trip_starting_points,
 			arr=possible_trip_destinations,
 			dt=valid_starting_points,
-			save_db=save_to_db,
 		)
 
 		min_stay = min(wanted_stay_time)
@@ -86,7 +84,6 @@ class TripAgencyService:
 			dep=possible_trip_destinations,
 			arr=possible_trip_starting_points,
 			dt=valid_return_dates,
-			save_db=save_to_db,
 		)
 
 		for (dep_flight_dp, dep_flight_arr, dep_flight_dt), dep_flights in departure_flights.items():

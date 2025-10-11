@@ -74,7 +74,7 @@ class Scraper:
 	def fetch_momondo_html(self, url: str) -> str:
 		with Stealth().use_sync(sync_playwright()) as p:
 			browser = p.chromium.launch(
-				headless=True,
+				headless=False,
 				args=['--disable-blink-features=AutomationControlled', '--enable-webgl', '--use-gl=swiftshader', '--enable-accelerated-2d-canvas'],
 			)
 

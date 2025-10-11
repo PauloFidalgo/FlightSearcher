@@ -35,6 +35,7 @@ select = [
 
 [tool.ruff]
 line-length = 200
+exclude = ["__init__.py", "flight_viewer.py"]
 
 [tool.ruff.format]
 quote-style = "single"
